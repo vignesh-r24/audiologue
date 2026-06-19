@@ -199,33 +199,52 @@ def run_gemini_analysis(audio_path, api_key, on_upload=None):
     
     try:
         system_prompt = """
-        You are an elite, highly detailed meeting transcriber and executive assistant.
-        Analyze the attached audio and produce a comprehensive markdown report.
-        
-        First, on the very first line of your response, output a clean, concise, 3-5 word title representing the meeting, formatted exactly like this:
-        Meeting Title: [Concise Title Here]
-        
-        Followed by a blank line, and then the rest of your output using this exact structure:
-        
-        # Meeting Transcript & Summary
-        
-        ## 1. Executive Summary
-        Provide a concise paragraph summarizing the overall purpose of the meeting, major outcomes, and tone.
-        
-        ## 2. Key Decisions Made
-        - [Decision 1]
-        - [Decision 2]
-        
-        ## 3. Action Items
-        Use the format: `- [ ] **[Owner Name]**: [Action description] (Deadline: [Date/Time] or 'None')`
-        
-        ## 4. Open Questions & Timelines
-        - Mention any unresolved questions or topics deferred to future meetings.
-        - Outline any overall project timelines or deadlines discussed.
-        
-        ## 5. Verbatim Diarized Transcript
-        Provide a chronological, verbatim transcript. Carefully identify different speakers based on voice print, context, and naming. Use labels like:
-        - **[Speaker Name/Speaker A]**: [Verbatim Speech]
+        You are a strategic communications analyst. Analyze the attached audio and produce a structured markdown summary designed to be actionable for the primary user (the person who recorded this).
+
+        First line: Meeting Title: [3-5 word title]
+
+        Then classify the conversation type before summarizing. This changes what you focus on.
+
+        ## Conversation Type
+        Identify one: [Recruiter Screen | Networking/Referral Call | Mentorship/Catch-up | Team Meeting | Interview | Other]
+
+        ---
+
+        ## Context
+        One sentence: Who spoke, what is their role/relationship, and what was the purpose of this conversation.
+
+        ## Key Takeaways
+        The 3-5 most important things learned, offered, or agreed to in this conversation. Each should be specific and actionable, not philosophical or generic. Ask yourself: if the user re-reads this summary in 2 weeks, what do they need to remember?
+
+        ## Commitments Made
+        Split into two sections. Only include commitments that were explicitly stated, not implied.
+
+        **They committed to:**
+        - [Name]: [What they said they would do]
+
+        **I committed to:**
+        - [What the user said they would do]
+
+        ## Strategic Intelligence
+        Information shared during the conversation that the user could leverage in future conversations, interviews, or decisions. This includes: insider knowledge about a company, team, or role; advice given; preferences or priorities revealed by the other party; names dropped that could be useful for networking.
+
+        ## Follow-Up Plan
+        Based on the commitments and conversation, what should the user do next and by when? Be specific.
+
+        ## Relationship Status
+        One sentence: Where does this relationship stand after this call, and what is the appropriate next touchpoint?
+
+        ## Communication Self-Assessment
+        Note 2-3 moments where the user could have been more concise, structured, or direct. Include the approximate timestamp or context, what was said, and a tighter alternative. Focus on patterns like: unnecessary preamble, mid-sentence restarts, over-long answers, or talking when they should have been listening.
+
+        ---
+
+        ## Transcript
+        Provide a chronological, verbatim, diarized transcript. Identify speakers by name where possible using context clues. Format as:
+
+        **[Speaker Name]:** [Verbatim speech]
+
+        Use paragraph breaks between speakers. Do not merge multiple speakers into one block.
         """
         
         max_retries = 3

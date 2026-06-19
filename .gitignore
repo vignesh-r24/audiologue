@@ -1,0 +1,17 @@
+# Virtual Environment
+venv/
+
+# macOS files
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local audio files
+*.wav
+*.mp3
+
+# Local application bundle builds
+Audiologue.app/
+build/

@@ -57,11 +57,16 @@ When you click **Start Recording** for the first time, macOS will ask for two pe
 1. Click the status bar icon.
 2. Select **Start Recording** when your meeting begins. The icon status will update to show `[R]` (Recording) in the menu bar, accompanied by macOS's native purple recording indicator.
 3. Select **Stop Recording** when the meeting ends. The status will update to `[P]` (Processing) while it mixes the audio channels, uploads it to the Gemini File API, and generates your notes.
-4. Once completed, the note will **automatically open in TextEdit**!
+4. Once completed, the note will **automatically open in a browser tab** with a beautiful layout and quick "Copy Markdown" options!
 5. Access your last 5 notes directly from the **Recent Notes** submenu, or select **Open Notes Folder** to view them in Finder.
 
 ---
 
 ## File Locations
-* **Meeting Notes (.md)**: Saved under `~/Library/Application Support/Audiologue/MeetingNotes/`
+* **Meeting Notes (.md & .html)**: Saved under `~/Library/Application Support/Audiologue/MeetingNotes/`
 * **Temporary Files**: Saved under the system temporary directory and securely deleted immediately after processing.
+
+---
+
+## Future Enhancements
+* 🔄 **Mid-Recording Audio Route Switching**: Support real-time audio input device changes (e.g. switching from built-in microphone to AirPods) during an active recording session. This will require introducing an `AVAudioConverter` in the mic stream to resample variable hardware formats (like 16kHz Bluetooth HFP vs. 48kHz built-in input) to a unified output format, listening to `.AVAudioEngineConfigurationChange` notifications, and dynamically reconfiguring the input tap graph.

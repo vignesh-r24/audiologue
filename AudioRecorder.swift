@@ -2,6 +2,7 @@ import Foundation
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
+import CoreAudio
 
 class AudioRecorder: NSObject, SCStreamOutput {
     private var stream: SCStream?
@@ -71,7 +72,15 @@ class AudioRecorder: NSObject, SCStreamOutput {
         
         // 2. Start AVAudioEngine for Microphone Audio
         let inputNode = audioEngine.inputNode
+        
+        // Query and apply the default system input device ID explicitly
+        if let defaultInputID = getDefaultInputDevice() {
+            print("[Recorder] Current default system input device ID: \(defaultInputID)")
+            try? setInputDevice(defaultInputID)
+        }
+        
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+        print("[Recorder] Microphone input channel count: \(recordingFormat.channelCount), sample rate: \(recordingFormat.sampleRate)")
         
         // Create AVAudioFile with standard recording format (PCM)
         let micSettings = recordingFormat.settings
@@ -88,6 +97,55 @@ class AudioRecorder: NSObject, SCStreamOutput {
         
         try audioEngine.start()
         print("[Recorder] System audio and mic recorders started successfully.")
+    }
+    
+    // CoreAudio Helper to get default input device
+    private func getDefaultInputDevice() -> AudioDeviceID? {
+        var deviceID = kAudioObjectUnknown
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &deviceID
+        )
+        
+        if status == noErr {
+            return deviceID
+        }
+        return nil
+    }
+    
+    // CoreAudio Helper to set device on inputNode
+    private func setInputDevice(_ deviceID: AudioDeviceID) throws {
+        let inputNode = audioEngine.inputNode
+        guard let audioUnit = inputNode.audioUnit else {
+            throw NSError(domain: "AudioRecorder", code: 10, userInfo: [NSLocalizedDescriptionKey: "Input node audio unit is nil"])
+        }
+        
+        var tempDeviceID = deviceID
+        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &tempDeviceID,
+            size
+        )
+        
+        if status != noErr {
+            throw NSError(domain: "AudioRecorder", code: 11, userInfo: [NSLocalizedDescriptionKey: "Failed to set input device, status: \(status)"])
+        }
     }
     
     func stop() async throws {

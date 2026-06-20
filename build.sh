@@ -25,7 +25,8 @@ swiftc -o "$MACOS_DIR/Audiologue" \
     -framework Cocoa \
     -framework ScreenCaptureKit \
     -framework AVFoundation \
-    -framework CoreMedia
+    -framework CoreMedia \
+    -framework CoreAudio
 
 # 3. Copy bundle Info.plist and generate PkgInfo
 echo "Generating bundle metadata..."

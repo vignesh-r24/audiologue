@@ -26,5 +26,16 @@
 	<string>Audiologue requires microphone access to record your meeting voice tracks.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Audiologue requires system audio capture permissions to record system sounds (like other speakers in virtual meetings).</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.vigneshradhakrishnan.Audiologue</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>audiologue</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

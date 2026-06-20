@@ -62,6 +62,27 @@ fi
 # Remove old app and replace with new build
 rm -rf /Applications/Audiologue.app
 cp -R "$APP_DIR" /Applications/
+
+# Sign the app. We check if the stable developer certificate exists on this machine.
+# If yes, we use it to preserve TCC permissions across builds.
+# If no, we fall back to ad-hoc signing (-) and reset TCC to trigger a fresh prompt.
+echo "Signing the application bundle..."
+if security find-identity -p codesigning -v | grep -q "Audiologue Dev"; then
+    echo "Found stable development certificate 'Audiologue Dev'. Signing with stable certificate..."
+    codesign --force --deep --sign "Audiologue Dev" /Applications/Audiologue.app
+else
+    echo "Stable certificate 'Audiologue Dev' not found. Falling back to ad-hoc signing..."
+    codesign --force --deep --sign - /Applications/Audiologue.app
+    
+    echo "Resetting microphone and screen capture permissions in TCC database..."
+    tccutil reset Microphone com.vigneshradhakrishnan.Audiologue || true
+    tccutil reset ScreenCapture com.vigneshradhakrishnan.Audiologue || true
+fi
+
+# Register the app bundle with Launch Services
+echo "Registering application with Launch Services..."
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Audiologue.app
+
 touch /Applications/Audiologue.app
 
 # Clean up local build directory

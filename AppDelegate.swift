@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var openFolderItem: NSMenuItem!
     private var setKeyItem: NSMenuItem!
     private var quitItem: NSMenuItem!
+    private var dashboardItem: NSMenuItem!
     
     private var recorder: AudioRecorder?
     private var isRecording = false
@@ -27,7 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var systemPrompt: String {
         let name = firstName
         return """
-        CRITICAL SAFETY CHECK: If the attached audio is silent, contains only static, music, or background noise, or does not contain any discernible spoken conversation, you MUST NOT hallucinate or fabricate any conversation, speakers, or meeting details. Instead, you must output exactly:
+        CRITICAL SAFETY CHECK: If the attached audio is completely silent, contains only static, or contains only background noise (with no human voice or vocals at all), you MUST NOT hallucinate or fabricate any conversation, speakers, or meeting details. Instead, you must output exactly:
         Meeting Title: No Speech Detected
         No speech detected in the audio recording.
         Do not generate any other sections or text.
@@ -39,7 +40,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Then classify the conversation type before summarizing. This changes what you focus on.
 
         ## Conversation Type
-        Identify one: [Recruiter Screen | Networking/Referral Call | Mentorship/Catch-up | Team Meeting | Interview | Other]
+        Identify one: [Meeting | Interview | Media/Podcast | Other]
+        - Choose 'Meeting' for professional calls, catch-ups, syncs, or coffee chats with other participants.
+        - Choose 'Interview' for recruiter screens, job interviews, or interview practices/bio introductions.
+        - Choose 'Media/Podcast' for recorded podcasts, lectures, video audio, or passive listening/commentaries.
+        - Choose 'Other' for vocal practice, singing, hardware test recordings, or miscellaneous items.
 
         ---
 
@@ -103,8 +108,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Run migration of existing loose HTML files to .previews subfolder
         migrateExistingHTMLFiles()
         
+        // Regenerate the dashboard HTML to ensure it is up-to-date
+        regenerateDashboard()
+        
         // Register signal handlers for graceful shutdown on terminal exit
         setupSignalHandlers()
+        
+        // Register custom URL scheme handler for audiologue://
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)), forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
         
         // Hide dock icon for dockless experience
         NSApp.setActivationPolicy(.accessory)
@@ -124,6 +135,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         toggleItem = NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: "")
         menu.addItem(toggleItem)
+        
+        dashboardItem = NSMenuItem(title: "View Notes Dashboard", action: #selector(openDashboard), keyEquivalent: "")
+        menu.addItem(dashboardItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -743,6 +757,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 <div style="font-size:0.75rem; color:var(--text-muted); text-align:center; margin-top:6px;">
                     Paste directly into Notion, Slack, or Obsidian
                 </div>
+                
+                <a class="btn btn-secondary" href="../dashboard.html" style="text-decoration: none; display: flex; align-items: center; justify-content: center; margin-top: 16px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+                    View Dashboard
+                </a>
             </div>
         </div>
 
@@ -1013,6 +1032,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         task.launchPath = "/usr/bin/open"
         task.arguments = [htmlURL.path]
         task.launch()
+        
+        // Regenerate the dashboard HTML to include the new note
+        regenerateDashboard()
     }
     
     private func getNotesDirectory() -> URL {
@@ -1275,4 +1297,694 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGINT, handler)
         signal(SIGTERM, handler)
     }
+    
+    @objc private func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+        if let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+           let url = URL(string: urlString) {
+            handleURL(url)
+        }
+    }
+    
+    private func handleURL(_ url: URL) {
+        guard url.scheme == "audiologue" else { return }
+        
+        if url.host == "delete" {
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
+                  let queryItems = components.queryItems,
+                  let filename = queryItems.first(where: { $0.name == "filename" })?.value else {
+                return
+            }
+            
+            let sanitized = filename.replacingOccurrences(of: "..", with: "")
+                                    .replacingOccurrences(of: "/", with: "")
+                                    .replacingOccurrences(of: "\\", with: "")
+            
+            if !sanitized.isEmpty {
+                deleteNoteFiles(filename: sanitized)
+            }
+        }
+    }
+    
+    private func deleteNoteFiles(filename: String) {
+        let notesDir = getNotesDirectory()
+        let mdURL = notesDir.appendingPathComponent("\(filename).md")
+        let htmlURL = notesDir.appendingPathComponent(".previews/\(filename).html")
+        
+        let fm = FileManager.default
+        do {
+            if fm.fileExists(atPath: mdURL.path) {
+                try fm.removeItem(at: mdURL)
+                print("[System] Deleted markdown note: \(mdURL.path)")
+            }
+            if fm.fileExists(atPath: htmlURL.path) {
+                try fm.removeItem(at: htmlURL)
+                print("[System] Deleted preview HTML: \(htmlURL.path)")
+            }
+            
+            DispatchQueue.main.async {
+                self.regenerateDashboard()
+                self.updateRecentNotesMenu()
+            }
+        } catch {
+            print("[Error] Failed to delete note files for \(filename): \(error.localizedDescription)")
+        }
+    }
+    
+    @objc private func openDashboard() {
+        regenerateDashboard()
+        let notesDir = getNotesDirectory()
+        let dashboardURL = notesDir.appendingPathComponent("dashboard.html")
+        
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments = [dashboardURL.path]
+        task.launch()
+    }
+    
+    private func regenerateDashboard() {
+        let notesDir = getNotesDirectory()
+        let dashboardURL = notesDir.appendingPathComponent("dashboard.html")
+        let notesList = getNotesList()
+        do {
+            try generateDashboardHTML(notesList: notesList, outputURL: dashboardURL)
+            print("[System] Dashboard successfully regenerated at: \(dashboardURL.path)")
+        } catch {
+            print("[Error] Failed to regenerate dashboard: \(error.localizedDescription)")
+        }
+    }
+    
+    private func getNotesList() -> [NoteInfo] {
+        let notesDir = getNotesDirectory()
+        let fm = FileManager.default
+        var list: [NoteInfo] = []
+        
+        do {
+            let contents = try fm.contentsOfDirectory(at: notesDir, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles)
+            let mdFiles = contents.filter { $0.pathExtension.lowercased() == "md" }
+            
+            for noteURL in mdFiles {
+                let filename = noteURL.deletingPathExtension().lastPathComponent
+                guard let content = try? String(contentsOf: noteURL, encoding: .utf8) else { continue }
+                
+                let lines = content.components(separatedBy: .newlines)
+                
+                var title = filename.replacingOccurrences(of: "_", with: " ")
+                if let firstLine = lines.first {
+                    if firstLine.hasPrefix("# ") {
+                        title = firstLine.replacingOccurrences(of: "# ", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else if firstLine.hasPrefix("Meeting Title:") {
+                        title = firstLine.replacingOccurrences(of: "Meeting Title:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                
+                let lowerTitle = title.lowercased()
+                let lowerContent = content.lowercased()
+                
+                var conversationType = "Other"
+                var context = ""
+                
+                for i in 0..<min(lines.count, 35) {
+                    let line = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
+                    if line.hasPrefix("## Conversation Type") && i + 1 < lines.count {
+                        var extractedType = lines[i + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+                        if extractedType.hasPrefix("[") && extractedType.hasSuffix("]") {
+                            extractedType = String(extractedType.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                        if !extractedType.isEmpty {
+                            conversationType = extractedType
+                        }
+                    } else if line.hasPrefix("## Context") && i + 1 < lines.count {
+                        context = lines[i + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                
+                // If title is generic, fallback to cleaning the filename
+                if title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "meeting transcript & summary" {
+                    let cleanPattern = "^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}_?"
+                    if let regex = try? NSRegularExpression(pattern: cleanPattern, options: []) {
+                        let nsRange = NSRange(location: 0, length: filename.utf16.count)
+                        let cleaned = regex.stringByReplacingMatches(in: filename, options: [], range: nsRange, withTemplate: "")
+                        if !cleaned.isEmpty {
+                            title = cleaned.replacingOccurrences(of: "_", with: " ")
+                        }
+                    }
+                }
+                
+                // Extract Attendees
+                var attendeesSet = Set<String>()
+                for line in lines {
+                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.hasPrefix("**") {
+                        let components = trimmed.components(separatedBy: "**")
+                        if components.count > 2 {
+                            let namePart = components[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                            var speakerName = namePart
+                            if speakerName.hasSuffix(":") {
+                                speakerName = String(speakerName.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                            let lowerName = speakerName.lowercased()
+                            if !lowerName.isEmpty && lowerName != "they committed to" && lowerName != "i committed to" && lowerName != "action items" && speakerName.count < 30 {
+                                attendeesSet.insert(speakerName)
+                            }
+                        }
+                    }
+                }
+                
+                var attendeesList = attendeesSet.sorted()
+                attendeesList = attendeesList.filter { name in
+                    let lower = name.lowercased()
+                    return lower != "vignesh" && lower != "vignesh radhakrishnan"
+                }
+                
+                var attendees = attendeesList.joined(separator: ", ")
+                if attendees.isEmpty {
+                    if context.contains("Vignesh spoke with ") {
+                        let parts = context.components(separatedBy: "Vignesh spoke with ")
+                        if parts.count > 1 {
+                            let afterSpoke = parts[1]
+                            let nameWord = afterSpoke.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                            if !nameWord.isEmpty && nameWord.count < 30 {
+                                attendees = nameWord
+                            }
+                        }
+                    }
+                }
+                
+                if attendees.isEmpty {
+                    attendees = "Self"
+                }
+                
+                // Extract Organization
+                var organization = "—"
+                let knownOrgs = ["Intuit", "TechCorp", "SaaSify", "Amazon", "Google", "Mattel", "Kellogg", "Northwestern"]
+                for org in knownOrgs {
+                    if title.localizedCaseInsensitiveContains(org) || filename.localizedCaseInsensitiveContains(org) || context.localizedCaseInsensitiveContains(org) {
+                        organization = org
+                        break
+                    }
+                }
+                if organization == "—" {
+                    if let regex = try? NSRegularExpression(pattern: "\\bat\\s+([A-Z][a-zA-Z0-9]+)\\b", options: []) {
+                        let nsRange = NSRange(content.startIndex..<content.endIndex, in: content)
+                        if let match = regex.firstMatch(in: content, options: [], range: nsRange) {
+                            if let orgRange = Range(match.range(at: 1), in: content) {
+                                let candidate = String(content[orgRange])
+                                let blacklist = ["The", "A", "An", "This", "First", "In", "On", "At", "Vignesh", "Sarah", "Rashmi", "St", "State", "He", "She", "They", "We", "I", "You", "It", "No", "Yes", "So"]
+                                if !blacklist.contains(candidate) && candidate.count > 2 && candidate.count < 30 {
+                                    organization = candidate
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Standardize Category
+                var standardizedCategory = "Other"
+                let lowerType = conversationType.lowercased()
+                let lowerContext = context.lowercased()
+                let lowerAttendees = attendees.lowercased()
+                
+                let isMediaWord = lowerTitle.contains("gameplay") || lowerTitle.contains("commentary") || lowerTitle.contains("playthrough") || lowerTitle.contains("video") || lowerTitle.contains("stream") || lowerTitle.contains("episode") || lowerTitle.contains("podcast") || lowerTitle.contains("highlights")
+                
+                if lowerContent.contains("not a participant") || lowerContext.contains("not a participant") || lowerType.contains("podcast") || lowerType.contains("media") || lowerType.contains("show") || lowerType.contains("stream") || lowerType.contains("listening") || isMediaWord || lowerAttendees.contains("commentator") || lowerAttendees.contains("host") || lowerAttendees.contains("guest") {
+                    standardizedCategory = "Media/Podcast"
+                } else if lowerType.contains("recruiter") || lowerType.contains("screen") || lowerType.contains("interview") || lowerTitle.contains("interview") || lowerType.contains("introduction") || lowerTitle.contains("bio") || lowerType.contains("pitch") {
+                    standardizedCategory = "Interview"
+                } else if lowerType.contains("meeting") || lowerType.contains("team") || lowerType.contains("call") || lowerType.contains("catch-up") {
+                    standardizedCategory = "Meeting"
+                } else if attendees != "Self" && !attendees.isEmpty {
+                    let isGenericSpeaker = lowerAttendees == "speaker 1" || lowerAttendees == "speaker 2" || lowerAttendees == "singer" || lowerAttendees == "vocalist"
+                    if isGenericSpeaker && lowerType.contains("other") {
+                        standardizedCategory = "Other"
+                    } else {
+                        standardizedCategory = "Meeting"
+                    }
+                }
+                
+                let displayDate = getFormattedDate(fromFilename: filename)
+                let previewFilename = "\(filename).html"
+                
+                // Resilient Lookup: Ensure preview HTML exists
+                let previewsDir = notesDir.appendingPathComponent(".previews")
+                let htmlURL = previewsDir.appendingPathComponent(previewFilename)
+                if !fm.fileExists(atPath: htmlURL.path) {
+                    print("[Resilient Lookup] HTML preview missing for \(filename). Generating companion...")
+                    try? generateHTMLFile(markdownContent: content, title: title, displayDate: displayDate, outputURL: htmlURL)
+                }
+                
+                list.append(NoteInfo(
+                    filename: filename,
+                    title: title,
+                    dateString: displayDate,
+                    conversationType: standardizedCategory,
+                    context: context,
+                    previewFilename: previewFilename,
+                    attendees: attendees,
+                    organization: organization
+                ))
+            }
+            
+            return list.sorted { $0.filename > $1.filename }
+        } catch {
+            print("Failed to list notes for dashboard: \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    private func generateDashboardHTML(notesList: [NoteInfo], outputURL: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        let jsonData = (try? encoder.encode(notesList)) ?? Data()
+        let jsonString = String(data: jsonData, encoding: .utf8) ?? "[]"
+        
+        let htmlTemplate = #"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audiologue - Notes Dashboard</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: #f8fafc;
+            color: #1e293b;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            padding: 40px 24px;
+        }
+
+        .container {
+            max-width: 1040px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 32px;
+        }
+
+        .brand-section h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #0f172a;
+            letter-spacing: -0.025em;
+        }
+
+        .brand-section p {
+            color: #64748b;
+            font-size: 0.95rem;
+            margin-top: 4px;
+        }
+
+        /* Controls bar */
+        .controls-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .search-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            width: 16px;
+            height: 16px;
+            color: #64748b;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            pointer-events: none;
+        }
+
+        .search-input {
+            padding: 8px 12px 8px 36px;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            font-size: 14px;
+            font-family: inherit;
+            color: #1e293b;
+            outline: none;
+            transition: all 0.15s ease;
+            width: 240px;
+            background-color: #ffffff;
+        }
+
+        .search-input:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+        }
+
+        .filter-pills {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .filter-pill {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            background-color: #e2e8f0;
+            color: #475569;
+            border: none;
+            transition: all 0.15s ease;
+        }
+
+        .filter-pill:hover {
+            background-color: #cbd5e1;
+            color: #1e293b;
+        }
+
+        .filter-pill.active {
+            background-color: #6366f1;
+            color: #ffffff;
+        }
+
+        .note-count {
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        /* Simple Table styling */
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+            background: #ffffff;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+            margin-bottom: 24px;
+        }
+
+        .notes-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            text-align: left;
+            min-width: 800px;
+        }
+
+        .notes-table th {
+            padding: 12px 16px;
+            font-weight: 600;
+            color: #475569;
+            border-bottom: 1px solid #e2e8f0;
+            background-color: #f8fafc;
+        }
+
+        .notes-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: middle;
+            color: #334155;
+        }
+
+        .notes-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .notes-table tr:hover {
+            background-color: #f8fafc;
+        }
+
+        .note-title-link {
+            color: #6366f1;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.15s ease;
+        }
+
+        .note-title-link:hover {
+            color: #4f46e5;
+            text-decoration: underline;
+        }
+
+        /* Simplified tag badges */
+        .badge {
+            font-size: 12px;
+            font-weight: 500;
+            padding: 4px 10px;
+            border-radius: 4px;
+            display: inline-block;
+            white-space: nowrap;
+            line-height: 1.2;
+            background-color: #f1f5f9;
+            color: #475569;
+        }
+
+        .badge-interview { background-color: #fee2e2; color: #991b1b; }
+        .badge-meeting { background-color: #e0f2fe; color: #075985; }
+        .badge-media-podcast { background-color: #dcfce7; color: #166534; }
+        .badge-other { background-color: #f1f5f9; color: #475569; }
+
+        .organization-text {
+            font-weight: 500;
+            color: #334155;
+        }
+
+        .date-text {
+            color: #64748b;
+            font-size: 13px;
+        }
+
+        .delete-btn {
+            background: none;
+            border: none;
+            color: #ef4444;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+
+        .delete-btn:hover {
+            background-color: #fef2f2;
+            color: #b91c1c;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="brand-section">
+                <h1>Meeting Notes</h1>
+                <p>Dashboard of your transcribed notes and strategic summaries</p>
+            </div>
+        </header>
+
+        <section class="controls-bar">
+            <div class="search-container">
+                <svg class="search-icon" viewBox="0 0 16 16"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg>
+                <input type="text" id="search-input" class="search-input" placeholder="Search notes...">
+            </div>
+            <div class="filter-pills" id="filter-tabs">
+                <button class="filter-pill active" data-filter="all">All</button>
+                <button class="filter-pill" data-filter="Meeting">Meetings</button>
+                <button class="filter-pill" data-filter="Interview">Interviews</button>
+                <button class="filter-pill" data-filter="Media/Podcast">Media & Podcasts</button>
+                <button class="filter-pill" data-filter="Other">Other</button>
+            </div>
+            <div class="note-count" id="note-count">0 meetings</div>
+        </section>
+
+        <main class="table-container">
+            <table class="notes-table">
+                <thead>
+                    <tr>
+                        <th style="width: 30%;">Meeting Name</th>
+                        <th style="width: 20%;">Attendees</th>
+                        <th style="width: 15%;">Organization</th>
+                        <th style="width: 13%;">Category</th>
+                        <th style="width: 14%;">Meeting Date</th>
+                        <th style="width: 8%; text-align: center;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <!-- Dynamic rows injected here -->
+                </tbody>
+            </table>
+        </main>
+        
+        <div id="empty-state" class="empty-state" style="display: none;">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
+            <h3>No notes found</h3>
+            <p>Try refining your search terms or filter selection.</p>
+        </div>
+    </div>
+
+    <script>
+        let notes = ##NOTES_JSON##;
+
+        function getCategoryBadge(type) {
+            const norm = type.toLowerCase().trim();
+            let cls = 'badge';
+            
+            if (norm === 'interview') {
+                cls += ' badge-interview';
+            } else if (norm === 'meeting') {
+                cls += ' badge-meeting';
+            } else if (norm === 'media/podcast') {
+                cls += ' badge-media-podcast';
+            } else {
+                cls += ' badge-other';
+            }
+            
+            return `<span class="${cls}">${type}</span>`;
+        }
+
+        function renderNotes(filteredNotes) {
+            const tbody = document.getElementById('table-body');
+            const emptyState = document.getElementById('empty-state');
+            const countLabel = document.getElementById('note-count');
+            tbody.innerHTML = '';
+            
+            countLabel.textContent = `${filteredNotes.length} meeting${filteredNotes.length === 1 ? '' : 's'}`;
+
+            if (filteredNotes.length === 0) {
+                document.querySelector('.table-container').style.display = 'none';
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            document.querySelector('.table-container').style.display = 'block';
+            emptyState.style.display = 'none';
+
+            filteredNotes.forEach(note => {
+                const tr = document.createElement('tr');
+                const isSelf = note.attendees.toLowerCase() === 'self';
+                const attendeesHtml = isSelf 
+                    ? `<span style="color: #64748b; font-style: italic;">Self</span>` 
+                    : `<span title="${note.attendees}">${note.attendees}</span>`;
+                
+                const orgHtml = note.organization === '—' 
+                    ? `<span style="color: #cbd5e1;">—</span>` 
+                    : `<span class="organization-text">${note.organization}</span>`;
+
+                tr.innerHTML = `
+                    <td>
+                        <a class="note-title-link" href=".previews/${note.previewFilename}" target="_blank">${note.title}</a>
+                    </td>
+                    <td>${attendeesHtml}</td>
+                    <td>${orgHtml}</td>
+                    <td>${getCategoryBadge(note.conversationType)}</td>
+                    <td class="date-text">${note.dateString}</td>
+                    <td style="text-align: center;">
+                        <button class="delete-btn" onclick="deleteNote('${note.filename}')" title="Delete note">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Search & Filter Logic
+        let activeFilter = 'all';
+        let searchQuery = '';
+
+        function applySearchAndFilter() {
+            const filtered = notes.filter(note => {
+                // Category Filter
+                let matchesCategory = false;
+                if (activeFilter === 'all') {
+                    matchesCategory = true;
+                } else if (activeFilter === 'Other') {
+                    const knownTypes = ['meeting', 'interview', 'media/podcast'];
+                    matchesCategory = !knownTypes.some(kt => note.conversationType.toLowerCase() === kt);
+                } else {
+                    matchesCategory = note.conversationType.toLowerCase() === activeFilter.toLowerCase();
+                }
+
+                // Text Search
+                const query = searchQuery.toLowerCase();
+                const matchesSearch = 
+                    note.title.toLowerCase().includes(query) ||
+                    note.context.toLowerCase().includes(query) ||
+                    note.attendees.toLowerCase().includes(query) ||
+                    note.organization.toLowerCase().includes(query) ||
+                    note.conversationType.toLowerCase().includes(query);
+
+                return matchesCategory && matchesSearch;
+            });
+
+            renderNotes(filtered);
+        }
+
+        document.getElementById('search-input').addEventListener('input', (e) => {
+            searchQuery = e.target.value;
+            applySearchAndFilter();
+        });
+
+        const tabContainer = document.getElementById('filter-tabs');
+        tabContainer.addEventListener('click', (e) => {
+            if (e.target.classList.contains('filter-pill')) {
+                // Toggle active class
+                tabContainer.querySelectorAll('.filter-pill').forEach(pill => pill.classList.remove('active'));
+                e.target.classList.add('active');
+
+                activeFilter = e.target.getAttribute('data-filter');
+                applySearchAndFilter();
+            }
+        });
+
+        function deleteNote(filename) {
+            if (confirm("Are you sure you want to delete this note? It will be permanently removed from disk.")) {
+                const iframe = document.createElement('iframe');
+                iframe.style.display = 'none';
+                iframe.src = `audiologue://delete?filename=${filename}`;
+                document.body.appendChild(iframe);
+                
+                const idx = notes.findIndex(n => n.filename === filename);
+                if (idx !== -1) {
+                    notes.splice(idx, 1);
+                    applySearchAndFilter();
+                }
+                
+                setTimeout(() => iframe.remove(), 1000);
+            }
+        }
+
+        // Initial Render
+        renderNotes(notes);
+    </script>
+</body>
+</html>
+"""#
+        
+        let html = htmlTemplate.replacingOccurrences(of: "##NOTES_JSON##", with: jsonString)
+        try html.write(to: outputURL, atomically: true, encoding: .utf8)
+    }
+}
+
+struct NoteInfo: Codable {
+    let filename: String
+    let title: String
+    let dateString: String
+    let conversationType: String
+    let context: String
+    let previewFilename: String
+    let attendees: String
+    let organization: String
 }

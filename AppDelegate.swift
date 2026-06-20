@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var toggleItem: NSMenuItem!
     private var statusTitleItem: NSMenuItem!
+    private var deviceInfoItem: NSMenuItem!
     private var recentNotesMenu: NSMenu!
     private var openFolderItem: NSMenuItem!
     private var setKeyItem: NSMenuItem!
@@ -16,6 +17,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var activeGeminiClient: GeminiClient?
     private var activeRemoteFileName: String?
     
+    private var recordingTimer: Timer?
+    private var recordingStartDate: Date?
+    
     private var firstName: String {
         return NSFullUserName().components(separatedBy: " ").first ?? NSUserName()
     }
@@ -23,6 +27,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var systemPrompt: String {
         let name = firstName
         return """
+        CRITICAL SAFETY CHECK: If the attached audio is silent, contains only static, music, or background noise, or does not contain any discernible spoken conversation, you MUST NOT hallucinate or fabricate any conversation, speakers, or meeting details. Instead, you must output exactly:
+        Meeting Title: No Speech Detected
+        No speech detected in the audio recording.
+        Do not generate any other sections or text.
+
         You are a strategic communications analyst. Analyze the attached audio and produce a structured markdown summary designed to be actionable for the primary user (the person who recorded this).
 
         First line: Meeting Title: [3-5 word title]
@@ -60,14 +69,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         ## Communication Self-Assessment
         Evaluate **\(name)**'s communication only.
-        Note 2-3 moments where \(name) could have been more concise, structured, or direct. Include the approximate timestamp or context, what was said, and a tighter alternative. Focus on patterns like: unnecessary preamble, mid-sentence restarts, over-long answers, or talking when they should have been listening.
+        IMPORTANT: Only generate this section if the recording is a meeting, interview, or call where \(name) is actively participating and speaking. If this is a passive recording (e.g., a podcast, YouTube video, presentation, or lecture) where \(name) is not speaking, output: "No communication assessment available (primary user \(name) did not participate in the conversation)."
+        Otherwise, note 2-3 moments where \(name) could have been more concise, structured, or direct. Include the approximate timestamp or context, what was said, and a tighter alternative. Focus on patterns like: unnecessary preamble, mid-sentence restarts, over-long answers, or talking when they should have been listening.
 
         ---
 
         ## Transcript
         Provide a chronological, verbatim, diarized transcript. Identify speakers by name using context clues:
-        - The primary user (the person who recorded this meeting) is named \(name). Label their turns as **\(name)**.
-        - Identify the other speaker(s) dynamically by their actual name if mentioned or introduced in the audio. If their name is not mentioned, label them by their role (e.g., **Recruiter**, **Interviewer**, **Manager**) or relationship if clear from context, rather than using generic labels like "Speaker 2".
+        - The primary user (the person who recorded this meeting) is named \(name). Label a speaker's turns as **\(name)** ONLY if the recording is a meeting, call, or interview where \(name) is actively participating and speaking. Do NOT label any speaker as **\(name)** in passive recordings of external content (e.g., YouTube videos, podcast episodes, lectures, audiobooks, or presentations) unless there is clear, explicit evidence/confirmation (such as verbal introductions or other speakers addressing them by name) that \(name) is speaking.
+        - If it is a passive recording or \(name) is not speaking, identify speakers dynamically by their actual names if mentioned in the audio, or by their roles or descriptive labels (e.g., **Host**, **Guest**, **Co-Host**, **Presenter**, **Speaker 1**, **Speaker 2**).
         - Format each turn as:
           **[Speaker Name]:** [Verbatim speech]
         - Use paragraph breaks between speakers. Do not merge multiple speakers into one block.
@@ -106,6 +116,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusTitleItem = NSMenuItem(title: "Status: Idle", action: nil, keyEquivalent: "")
         statusTitleItem.isEnabled = false
         menu.addItem(statusTitleItem)
+        
+        deviceInfoItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        deviceInfoItem.isEnabled = false
+        deviceInfoItem.isHidden = true
+        menu.addItem(deviceInfoItem)
         
         toggleItem = NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: "")
         menu.addItem(toggleItem)
@@ -157,50 +172,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         recorder = AudioRecorder(outputURL: outputURL)
         
         isRecording = true
-        statusTitleItem.title = "Status: Recording..."
+        statusTitleItem.title = "Status: Connecting..."
         toggleItem.title = "Stop Recording"
+        
+        // Show [R] next to the app icon in the menu bar during recording
+        statusItem.button?.attributedTitle = NSAttributedString(string: "")
         statusItem.button?.title = "[R]"
         if let button = statusItem.button {
             button.imagePosition = .imageLeft
         }
         
+        // Show device info
+        let deviceName = recorder?.getDefaultInputDeviceName() ?? "Unknown"
+        deviceInfoItem.title = deviceName
+        if #available(macOS 11.0, *) {
+            if let micImage = NSImage(systemSymbolName: "mic", accessibilityDescription: "Microphone") {
+                micImage.isTemplate = true
+                deviceInfoItem.image = micImage
+            }
+        }
+        deviceInfoItem.isHidden = false
+        
         Task {
             do {
                 try await recorder?.start()
                 print("[System] Recording started.")
-            } catch {
-                let errDesc = error.localizedDescription
-                let isPermissionError = errDesc.contains("TCC") || errDesc.contains("declined") || errDesc.contains("permission")
-                
-                if isPermissionError {
-                    // Sleep to allow the macOS system prompt to be visible and clickable without being overlapped
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                }
                 
                 await MainActor.run {
-                    if isPermissionError {
-                        let hasPrompted = UserDefaults.standard.bool(forKey: "hasPromptedForPermissions")
-                        if !hasPrompted {
-                            // First run ever: system permissions prompts are active on screen.
-                            // Do not show our own alert window to avoid overlapping or blocking the OS prompt.
-                            UserDefaults.standard.set(true, forKey: "hasPromptedForPermissions")
-                            print("[System] First-time permissions prompts active. Suppressing alert overlay.")
-                        } else {
-                            // Subsequent run: permissions are explicitly denied/revoked.
-                            self.showErrorAlert(
-                                title: "System Permissions Setup Required",
-                                message: "Audiologue requires Microphone and Screen & System Audio Recording permissions to record meetings.\n\n" +
-                                         "1. macOS should have prompted you to allow these. Please click 'Allow' or 'Open System Settings'.\n" +
-                                         "2. Verify both permissions are enabled for 'Audiologue' in System Settings > Privacy & Security.\n" +
-                                         "3. If they are already enabled but you still see this message, select 'Audiologue' in the Screen Recording settings list, click the minus '-' button to remove it, and try again."
-                            )
-                        }
-                    } else {
-                        self.showErrorAlert(
-                            title: "Recording Failed",
-                            message: "Could not start audio recording.\n\nError: \(errDesc)"
-                        )
+                    // Only start timer and set date once recording successfully begins
+                    self.recordingStartDate = Date()
+                    self.statusTitleItem.title = "Status: Recording... 00:00"
+                    
+                    // Start elapsed timer (fires every second on the main RunLoop in common modes)
+                    let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                        guard let self = self, let start = self.recordingStartDate else { return }
+                        let elapsed = Int(Date().timeIntervalSince(start))
+                        let mins = elapsed / 60
+                        let secs = elapsed % 60
+                        let timeStr = String(format: "%02d:%02d", mins, secs)
+                        self.statusTitleItem.title = "Status: Recording... \(timeStr)"
                     }
+                    RunLoop.current.add(timer, forMode: .common)
+                    self.recordingTimer = timer
+                }
+            } catch {
+                let errDesc = error.localizedDescription
+                await MainActor.run {
+                    print("[Error] Recording failed to start: \(errDesc)")
                     self.resetUIState()
                 }
             }
@@ -210,9 +228,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopRecording() {
         isRecording = false
         isProcessing = true
+        
+        // Invalidate timer immediately so time stops going up
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        
         statusTitleItem.title = "Status: Processing..."
         toggleItem.title = "Processing Notes..."
+        
+        // Show [P] next to the app icon in the menu bar during processing
+        statusItem.button?.attributedTitle = NSAttributedString(string: "")
         statusItem.button?.title = "[P]"
+        if let button = statusItem.button {
+            button.imagePosition = .imageLeft
+        }
         
         Task {
             do {
@@ -281,9 +310,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isProcessing = false
         statusTitleItem.title = "Status: Idle"
         toggleItem.title = "Start Recording"
+        statusItem.button?.attributedTitle = NSAttributedString(string: "")
         statusItem.button?.title = ""
         statusItem.button?.imagePosition = .imageOnly
         recorder = nil
+        
+        // Stop elapsed timer and hide device info
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        recordingStartDate = nil
+        deviceInfoItem.isHidden = true
+        deviceInfoItem.image = nil
     }
     
     private func generateHTMLFile(markdownContent: String, title: String, displayDate: String, outputURL: URL) throws {

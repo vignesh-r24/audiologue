@@ -124,6 +124,29 @@ class AudioRecorder: NSObject, SCStreamOutput {
         return nil
     }
     
+    // Public helper to get the human-readable name of the current default input device
+    func getDefaultInputDeviceName() -> String {
+        guard let deviceID = getDefaultInputDevice() else { return "Unknown" }
+        
+        var namePropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var propertySize: UInt32 = 0
+        var status = AudioObjectGetPropertyDataSize(deviceID, &namePropertyAddress, 0, nil, &propertySize)
+        guard status == noErr, propertySize > 0 else { return "Unknown" }
+        
+        var name: Unmanaged<CFString>?
+        status = AudioObjectGetPropertyData(deviceID, &namePropertyAddress, 0, nil, &propertySize, &name)
+        
+        if status == noErr, let cfName = name?.takeRetainedValue() {
+            return cfName as String
+        }
+        return "Unknown"
+    }
+    
     // CoreAudio Helper to set device on inputNode
     private func setInputDevice(_ deviceID: AudioDeviceID) throws {
         let inputNode = audioEngine.inputNode

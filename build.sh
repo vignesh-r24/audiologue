@@ -16,7 +16,7 @@ mkdir -p "$RESOURCES_DIR"
 
 # 2. Compile Swift files
 echo "Compiling Swift source files..."
-swiftc -o "$MACOS_DIR/Audiologue" \
+swiftc -O -o "$MACOS_DIR/Audiologue" \
     main.swift \
     AppDelegate.swift \
     AudioRecorder.swift \

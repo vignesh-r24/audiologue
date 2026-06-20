@@ -1,48 +1,24 @@
 # Audiologue
 
-A lightweight, premium macOS status bar application that records system audio and microphone input concurrently, mixes them, transcribes and summarizes the dialogue using Google's Gemini 2.5 Flash API, and saves structured meeting notes locally.
+A lightweight, native macOS status bar application that records system audio and microphone input concurrently, transcribes and summarizes the dialogue using Google's Gemini Flash API, and saves structured meeting notes locally.
 
-Designed to live natively in your macOS menu bar with a clean, monochrome status bar icon.
+Now rewritten entirely in **native Swift**, Audiologue operates with zero third-party dependencies—no virtual loopback audio drivers (like BlackHole) or system audio switches required.
 
 ---
 
 ## Features
-* 🎙️ **Dual-Channel Recording**: Captures your microphone and system audio (e.g. Zoom, Teams, Webex) simultaneously using a virtual loopback driver.
+* 🎙️ **Direct Audio Capture**: Uses Apple's native **ScreenCaptureKit** to capture system audio (e.g., Zoom, Teams, Webex, or browser calls) directly at the OS level.
+* 🔊 **Working Volume Keys**: System volume controls and keyboard volume keys function perfectly during active recordings (no locked controls or "prohibit" signs).
 * ☁️ **Cloud-Powered AI**: Offloads transcription, speaker diarization, and executive summaries to Google's Gemini File API (using your own free API key), consuming 0% local CPU/RAM for the heavy lifting.
-* 💾 **Disk Streaming**: Writes raw audio streams directly to disk during the meeting, ensuring minimal memory footprint (~40-50 MB RAM) regardless of meeting duration.
 * 🔒 **Local Privacy**: Automatically cleans up temporary local files and deletes remote audio files from Google's servers immediately after generating meeting summaries.
-* 📊 **Smart Mixing**: Automatically normalizes and overlays both audio tracks into a lightweight, clear MP3 file post-meeting.
-* 🚀 **Spotlight Integration**: Packageable as a tiny, lightweight launcher app for instant launching via Spotlight search.
+* 📦 **Zero Dependencies**: Does not require BlackHole, Homebrew, SwitchAudioSource, or Python virtual environments. 
+* ⚡ **Ultra-Lightweight**: Compiles to a native Cocoa binary of just **~3 MB** that launches instantly and uses less than 1% CPU.
+* 🔄 **Smart Model Fallback**: Automatically loops through `gemini-3.5-flash` -> `gemini-3-flash` -> `gemini-2.5-flash` on rate-limit (429) errors, tripling your available daily free requests (up to 60/day).
+* 👤 **Dynamic Speaker Labeling**: Injects your macOS account name dynamically into the prompt to label your transcript turns by name, while automatically detecting other speaker names from conversation context.
 
 ---
 
-## 1. System Dependencies (macOS)
-
-Audiologue relies on Homebrew for essential audio routing utilities. Open your terminal and run:
-
-```bash
-# Install SwitchAudioSource, BlackHole loopback driver, and FFmpeg for audio mixing
-brew install switchaudio-osx blackhole-2ch ffmpeg
-```
-
----
-
-## 2. Audio MIDI Configuration
-
-To record system audio (incoming meeting voices) without losing the ability to hear the meeting in your headphones or speakers, you must configure **Multi-Output Devices** in macOS:
-
-1. Open the **Audio MIDI Setup** app (Applications > Utilities > Audio MIDI Setup).
-2. Click the `+` button in the bottom-left corner and select **Create Multi-Output Device**.
-3. Double-click its name in the sidebar and rename it exactly: **`Meeting-Speakers`**
-4. Check the box for **MacBook Air Speakers** (or your internal speakers) **AND** the box for **BlackHole 2ch**. Make sure the built-in speaker is set as the *Master Device*.
-5. (Optional - For AirPods users) Click the `+` button again, select **Create Multi-Output Device**, and rename it exactly: **`Meeting-AirPods`**
-6. Check the box for your **AirPods** **AND** the box for **BlackHole 2ch**. Make sure the AirPods are set as the *Master Device*.
-
-*Note: Audiologue automatically detects when you connect or disconnect AirPods during a meeting and seamlessly swaps system output between `Meeting-Speakers` and `Meeting-AirPods`.*
-
----
-
-## 3. Python Installation & Setup
+## 1. Setup & Installation
 
 1. Clone this repository:
    ```bash
@@ -50,52 +26,42 @@ To record system audio (incoming meeting voices) without losing the ability to h
    cd audiologue
    ```
 
-2. Create a Python virtual environment and activate it:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate
-   ```
-
-3. Install requirements:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Configure your Gemini API Key:
-   Run the secure setup script to save your key securely in the **macOS Keychain**:
-   ```bash
-   python setup_key.py
-   ```
-
----
-
-## 4. How to Use
-
-### Launching the Status Bar App
-Start the app inside your virtual environment:
-```bash
-python app.py
-```
-A custom **monochrome soundwave icon** will appear in your menu bar. 
-
-### Menu Bar Operations
-1. Click the status bar icon.
-2. Select **Start Recording** when your meeting begins. The icon status will update to show `[R]` (Recording).
-3. Select **Stop Recording** when the meeting ends. The status updates to `[P]` (Processing) while it mixes audio, uploads it to Gemini, and generates notes.
-4. Select **Open Notes Folder** to open `~/Library/Application Support/Audiologue/MeetingNotes` in Finder where your structured Markdown summary and verbatim diarized transcript are saved.
-
-### Terminal Fallback Control
-If your menu bar becomes crowded (due to the camera notch or many active icons) and macOS temporarily hides the status icon, you can simply focus your terminal window and **press the ENTER key**. The background listener thread will safely capture the command and stop/save the recording.
-
----
-
-## 5. Spotlight Integration & Standalone App
-
-Instead of leaving a terminal window open or manually compiling files, you can build and install a standalone macOS application bundle that runs quietly as a background status bar item:
-
-1. Package and install the app to `/Applications`:
+2. Compile and install the app directly to `/Applications/`:
    ```bash
    ./build.sh
    ```
-2. Now, simply press `Cmd + Space`, search **"Audiologue"**, and press Enter to launch the app natively!
 
+3. Open **Spotlight** (`Cmd + Space`), type **"Audiologue"**, and press Enter to launch the app!
+
+---
+
+## 2. Configuration & Permissions
+
+### API Key Configuration
+1. Click the Audiologue soundwave icon in the menu bar.
+2. Select **Set Gemini API Key**.
+3. Paste your Gemini API key (you can generate one for free in [Google AI Studio](https://aistudio.google.com/)).
+   * *Note: Your key is securely stored in your native macOS Keychain.*
+
+### macOS Permissions
+When you click **Start Recording** for the first time, macOS will ask for two permissions:
+1. **Microphone Access**: Required to record your own voice.
+2. **Screen & System Audio Recording**: Required to capture system audio (incoming speaker voices).
+   * *Important: Although Apple labels this popup "Screen Recording", Audiologue explicitly configures ScreenCaptureKit to capture **audio only**. No video or screen pixel data is ever read, processed, or saved.*
+
+---
+
+## 3. How to Use
+
+### Menu Bar Operations
+1. Click the status bar icon.
+2. Select **Start Recording** when your meeting begins. The icon status will update to show `[R]` (Recording) in the menu bar, accompanied by macOS's native purple recording indicator.
+3. Select **Stop Recording** when the meeting ends. The status will update to `[P]` (Processing) while it mixes the audio channels, uploads it to the Gemini File API, and generates your notes.
+4. Once completed, the note will **automatically open in TextEdit**!
+5. Access your last 5 notes directly from the **Recent Notes** submenu, or select **Open Notes Folder** to view them in Finder.
+
+---
+
+## File Locations
+* **Meeting Notes (.md)**: Saved under `~/Library/Application Support/Audiologue/MeetingNotes/`
+* **Temporary Files**: Saved under the system temporary directory and securely deleted immediately after processing.

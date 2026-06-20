@@ -1,78 +1,69 @@
 #!/bin/bash
-# build.sh - Packages and installs Audiologue.app to /Applications
+# build.sh - Compiles Swift codebase and packages/installs Audiologue.app
 set -e
 
-echo "=== Building Audiologue.app ==="
+echo "=== Building Native Swift Audiologue.app ==="
 
-# 1. Ensure venv exists
-if [ ! -d "venv" ]; then
-    echo "Error: virtual environment 'venv' not found. Please run './setup.sh' first."
-    exit 1
-fi
-
-# 2. Create the App Bundle structure in a clean build directory
+# 1. Clean build directories
 BUILD_DIR="build"
 APP_DIR="$BUILD_DIR/Audiologue.app"
-RESOURCES_DIR="$APP_DIR/Contents/Resources"
-SCRIPTS_DIR="$RESOURCES_DIR/Scripts"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
+RESOURCES_DIR="$APP_DIR/Contents/Resources"
 
-# Start from a clean build dir
 rm -rf "$BUILD_DIR"
-mkdir -p "$SCRIPTS_DIR"
 mkdir -p "$MACOS_DIR"
+mkdir -p "$RESOURCES_DIR"
 
-# 3. Copy bundle templates from existing workspace app or installed app
-if [ -d "Audiologue.app/Contents" ]; then
-    echo "Copying bundle templates from workspace app..."
-    cp "Audiologue.app/Contents/Info.plist" "$APP_DIR/Contents/Info.plist"
-    cp "Audiologue.app/Contents/PkgInfo" "$APP_DIR/Contents/PkgInfo"
-    cp "Audiologue.app/Contents/MacOS/Audiologue" "$MACOS_DIR/Audiologue"
+# 2. Compile Swift files
+echo "Compiling Swift source files..."
+swiftc -o "$MACOS_DIR/Audiologue" \
+    main.swift \
+    AppDelegate.swift \
+    AudioRecorder.swift \
+    GeminiClient.swift \
+    KeychainHelper.swift \
+    -framework Cocoa \
+    -framework ScreenCaptureKit \
+    -framework AVFoundation \
+    -framework CoreMedia
+
+# 3. Copy bundle Info.plist and generate PkgInfo
+echo "Generating bundle metadata..."
+cp Info.plist "$APP_DIR/Contents/Info.plist"
+echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
+
+# 4. Copy Icon assets from existing bundle template or workspace root
+echo "Copying icon assets..."
+if [ -f "Audiologue.app/Contents/Resources/applet.icns" ]; then
     cp "Audiologue.app/Contents/Resources/applet.icns" "$RESOURCES_DIR/applet.icns"
-    cp "Audiologue.app/Contents/Resources/applet.rsrc" "$RESOURCES_DIR/applet.rsrc"
-elif [ -d "/Applications/Audiologue.app/Contents" ]; then
-    echo "Copying bundle templates from installed app..."
-    cp "/Applications/Audiologue.app/Contents/Info.plist" "$APP_DIR/Contents/Info.plist"
-    cp "/Applications/Audiologue.app/Contents/PkgInfo" "$APP_DIR/Contents/PkgInfo"
-    cp "/Applications/Audiologue.app/Contents/MacOS/Audiologue" "$MACOS_DIR/Audiologue"
+elif [ -f "/Applications/Audiologue.app/Contents/Resources/applet.icns" ]; then
     cp "/Applications/Audiologue.app/Contents/Resources/applet.icns" "$RESOURCES_DIR/applet.icns"
-    cp "/Applications/Audiologue.app/Contents/Resources/applet.rsrc" "$RESOURCES_DIR/applet.rsrc"
-else
-    echo "Error: Could not find any template Audiologue.app bundle in workspace or /Applications."
-    exit 1
 fi
 
-# 4. Copy Python files, assets, and launcher scripts
-echo "Copying application source files..."
-cp app.py config.py recorder.py audio_detector.py icon.png icon@2x.png app_icon.png run.sh "$RESOURCES_DIR/"
+# Copy status bar soundwave icons
+if [ -f "Audiologue.app/Contents/Resources/icon.png" ]; then
+    cp "Audiologue.app/Contents/Resources/icon.png" "$RESOURCES_DIR/icon.png"
+    cp "Audiologue.app/Contents/Resources/icon@2x.png" "$RESOURCES_DIR/icon@2x.png"
+elif [ -f "icon.png" ]; then
+    cp icon.png "$RESOURCES_DIR/"
+    cp icon@2x.png "$RESOURCES_DIR/"
+fi
 
-# 5. Copy the virtual environment into the bundle
-echo "Copying virtual environment into bundle..."
-# Use rsync to copy venv efficiently, maintaining symlinks
-rsync -a --delete venv/ "$RESOURCES_DIR/venv/"
-
-# 6. Recompile AppleScript launcher script relative to bundle path
-echo "Compiling AppleScript launcher..."
-osacompile -o "$SCRIPTS_DIR/main.scpt" -e 'set appPath to POSIX path of (path to me)' -e 'do shell script "/bin/bash " & quoted form of (appPath & "Contents/Resources/run.sh")'
-
-# 7. Make launcher and shell script executable
-chmod +x "$RESOURCES_DIR/run.sh"
-chmod +x "$MACOS_DIR/Audiologue"
-
-# 8. Install to /Applications
-echo "Installing to /Applications/Audiologue.app..."
-# If it is running, kill it first to avoid text file busy errors
-PIDS=$(lsof -t +D /Applications/Audiologue.app 2>/dev/null || true)
+# 5. Stop running instances of Audiologue.app to prevent write busy errors
+echo "Installing to /Applications..."
+PIDS=$(pgrep -f "/Applications/Audiologue.app" || true)
 if [ -n "$PIDS" ]; then
-    echo "Stopping running Audiologue processes (PIDs: $PIDS)..."
+    echo "Stopping active Audiologue instances (PIDs: $PIDS)..."
     kill -9 $PIDS 2>/dev/null || true
     sleep 1
 fi
+
+# Remove old app and replace with new build
 rm -rf /Applications/Audiologue.app
 cp -R "$APP_DIR" /Applications/
 touch /Applications/Audiologue.app
 
-# Clean up build dir
+# Clean up local build directory
 rm -rf "$BUILD_DIR"
 
 echo "=== Build and Installation Complete! ==="

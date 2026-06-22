@@ -22,6 +22,7 @@ swiftc -O -o "$MACOS_DIR/Audiologue" \
     AudioRecorder.swift \
     GeminiClient.swift \
     KeychainHelper.swift \
+    NotionClient.swift \
     -framework Cocoa \
     -framework ScreenCaptureKit \
     -framework AVFoundation \

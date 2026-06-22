@@ -9,6 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var recentNotesMenu: NSMenu!
     private var openFolderItem: NSMenuItem!
     private var setKeyItem: NSMenuItem!
+    private var setNotionItem: NSMenuItem!
     private var quitItem: NSMenuItem!
     private var dashboardItem: NSMenuItem!
     
@@ -91,6 +92,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Redirect print statements and errors to a local log file for easy debugging
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let audiologueDir = appSupport.appendingPathComponent("Audiologue")
+        try? FileManager.default.createDirectory(at: audiologueDir, withIntermediateDirectories: true)
+        let logURL = audiologueDir.appendingPathComponent("audiologue.log")
+        if let logPath = logURL.path.cString(using: .utf8) {
+            _ = freopen(logPath, "a", stdout)
+            _ = freopen(logPath, "a", stderr)
+            // Disable stdout/stderr buffering to flush logs immediately to disk
+            setvbuf(stdout, nil, _IONBF, 0)
+            setvbuf(stderr, nil, _IONBF, 0)
+        }
+        print("\n--- Audiologue Launched at \(Date()) ---")
+
         // Setup status bar item
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
@@ -153,6 +168,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         setKeyItem = NSMenuItem(title: "Set Gemini API Key", action: #selector(setApiKey), keyEquivalent: "")
         menu.addItem(setKeyItem)
+        
+        setNotionItem = NSMenuItem(title: "Configure Notion...", action: #selector(configureNotion), keyEquivalent: "")
+        menu.addItem(setNotionItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -476,6 +494,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             border-color: var(--text-muted);
         }
 
+        #notion-btn:hover {
+            background-color: rgba(99, 102, 241, 0.05) !important;
+            border-color: var(--accent) !important;
+            transform: translateY(-1px);
+        }
+
         .content-panel {
             flex-grow: 1;
             background: var(--card-bg);
@@ -732,6 +756,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 max-width: 100%;
             }
         }
+        
+        .spinner {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -757,6 +789,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 <div style="font-size:0.75rem; color:var(--text-muted); text-align:center; margin-top:6px;">
                     Paste directly into Notion, Slack, or Obsidian
                 </div>
+                
+                <button class="btn btn-secondary" id="notion-btn" style="display: {{SHOW_NOTION_BUTTON}}; align-items: center; justify-content: center; margin-top: 10px; border-color: #6366f1; color: #6366f1;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    Send to Notion
+                </button>
                 
                 <a class="btn btn-secondary" href="../dashboard.html" style="text-decoration: none; display: flex; align-items: center; justify-content: center; margin-top: 16px;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
@@ -945,11 +982,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 const fullMarkdown = "# " + rawTitleStr + "\n\n" + md;
                 copyToClipboard(fullMarkdown);
             });
+
+            const notionBtn = document.getElementById('notion-btn');
+            if (notionBtn) {
+                notionBtn.addEventListener('click', () => {
+                    notionBtn.disabled = true;
+                    notionBtn.style.opacity = '0.7';
+                    notionBtn.innerHTML = `
+                        <svg class="spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+                            <line x1="12" y1="2" x2="12" y2="6"></line>
+                            <line x1="12" y1="18" x2="12" y2="22"></line>
+                            <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                            <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                            <line x1="2" y1="12" x2="6" y2="12"></line>
+                            <line x1="18" y1="12" x2="22" y2="12"></line>
+                            <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                            <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                        </svg>
+                        Sending...
+                    `;
+                    
+                    let iframe = document.getElementById('notion-iframe');
+                    if (!iframe) {
+                        iframe = document.createElement('iframe');
+                        iframe.id = 'notion-iframe';
+                        iframe.style.display = 'none';
+                        document.body.appendChild(iframe);
+                    }
+                    iframe.src = `audiologue://upload_notion?filename={{FILENAME}}`;
+                    
+                    showToast("Sending note to Notion...");
+                    
+                    setTimeout(() => {
+                        notionBtn.innerHTML = `
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            Sent to Notion!
+                        `;
+                        notionBtn.style.borderColor = '#22c55e';
+                        notionBtn.style.color = '#22c55e';
+                    }, 2000);
+                });
+            }
         });
     </script>
 </body>
 </html>
 """#
+        
+        let notionToken = KeychainHelper.get(service: "Audiologue", account: "notion_token") ?? ""
+        let notionDbId = KeychainHelper.get(service: "Audiologue", account: "notion_database_id") ?? ""
+        let showNotionBtn = (!notionToken.isEmpty && !notionDbId.isEmpty) ? "flex" : "none"
+        let filename = outputURL.deletingPathExtension().lastPathComponent
         
         let html = htmlTemplate
             .replacingOccurrences(of: "{{BASE64_MARKDOWN}}", with: base64Markdown)
@@ -957,6 +1042,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .replacingOccurrences(of: "{{MEETING_DATE}}", with: displayDate)
             .replacingOccurrences(of: "{{RAW_TITLE}}", with: title)
             .replacingOccurrences(of: "{{TITLE}}", with: title)
+            .replacingOccurrences(of: "{{SHOW_NOTION_BUTTON}}", with: showNotionBtn)
+            .replacingOccurrences(of: "{{FILENAME}}", with: filename)
         
         try html.write(to: outputURL, atomically: true, encoding: .utf8)
     }
@@ -1218,7 +1305,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        let input = EditableNSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         input.stringValue = KeychainHelper.get(service: "Audiologue", account: "api_key") ?? ""
         alert.accessoryView = input
         
@@ -1232,6 +1319,69 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 KeychainHelper.set(service: "Audiologue", account: "api_key", value: newKey)
                 print("[System] API Key saved to system Keychain.")
             }
+        }
+    }
+    
+    @objc private func configureNotion() {
+        let alert = NSAlert()
+        alert.messageText = "Notion Integration Setup"
+        alert.informativeText = "Enter your Notion Integration Token and Database ID. Make sure to share your Notion database with the integration."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        
+        let tokenLabel = NSTextField(labelWithString: "Internal Integration Token:")
+        tokenLabel.frame = NSRect(x: 0, y: 75, width: 300, height: 18)
+        container.addSubview(tokenLabel)
+        
+        let tokenInput = EditableNSTextField(frame: NSRect(x: 0, y: 50, width: 300, height: 24))
+        tokenInput.stringValue = KeychainHelper.get(service: "Audiologue", account: "notion_token") ?? ""
+        container.addSubview(tokenInput)
+        
+        let dbLabel = NSTextField(labelWithString: "Database ID:")
+        dbLabel.frame = NSRect(x: 0, y: 25, width: 300, height: 18)
+        container.addSubview(dbLabel)
+        
+        let dbInput = EditableNSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        dbInput.stringValue = KeychainHelper.get(service: "Audiologue", account: "notion_database_id") ?? ""
+        container.addSubview(dbInput)
+        
+        alert.accessoryView = container
+        NSApp.activate(ignoringOtherApps: true)
+        
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let newToken = tokenInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawDbId = dbInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            let cleanedInput = rawDbId.replacingOccurrences(of: "-", with: "").replacingOccurrences(of: " ", with: "")
+            let pathPart = cleanedInput.components(separatedBy: "?").first ?? cleanedInput
+            
+            var newDbId = pathPart
+            let pattern = "[a-fA-F0-9]{32}"
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                let nsRange = NSRange(location: 0, length: pathPart.utf16.count)
+                if let match = regex.firstMatch(in: pathPart, options: [], range: nsRange) {
+                    if let range = Range(match.range, in: pathPart) {
+                        newDbId = String(pathPart[range])
+                    }
+                }
+            }
+            
+            if !newToken.isEmpty {
+                KeychainHelper.set(service: "Audiologue", account: "notion_token", value: newToken)
+            } else {
+                KeychainHelper.delete(service: "Audiologue", account: "notion_token")
+            }
+            
+            if !newDbId.isEmpty {
+                KeychainHelper.set(service: "Audiologue", account: "notion_database_id", value: newDbId)
+            } else {
+                KeychainHelper.delete(service: "Audiologue", account: "notion_database_id")
+            }
+            
+            print("[System] Notion configuration saved securely.")
         }
     }
     
@@ -1321,6 +1471,70 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
             if !sanitized.isEmpty {
                 deleteNoteFiles(filename: sanitized)
+            }
+        } else if url.host == "upload_notion" {
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
+                  let queryItems = components.queryItems,
+                  let filename = queryItems.first(where: { $0.name == "filename" })?.value else {
+                return
+            }
+            
+            let sanitized = filename.replacingOccurrences(of: "..", with: "")
+                                    .replacingOccurrences(of: "/", with: "")
+                                    .replacingOccurrences(of: "\\", with: "")
+            
+            if !sanitized.isEmpty {
+                uploadNoteToNotion(filename: sanitized)
+            }
+        }
+    }
+    
+    private func uploadNoteToNotion(filename: String) {
+        let notesDir = getNotesDirectory()
+        let cleanName = filename.replacingOccurrences(of: ".md", with: "")
+        let mdURL = notesDir.appendingPathComponent("\(cleanName).md")
+        
+        guard let content = try? String(contentsOf: mdURL, encoding: .utf8) else {
+            print("[Notion] Error: Could not read note content for upload: \(mdURL.path)")
+            return
+        }
+        
+        // Parse Title and Sanitized Content
+        var meetingTitle = "Untitled Meeting"
+        let lines = content.components(separatedBy: .newlines)
+        var sanitizedContent = content
+        
+        if let firstLine = lines.first, firstLine.hasPrefix("# ") {
+            meetingTitle = firstLine.replacingOccurrences(of: "# ", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            sanitizedContent = lines.dropFirst().joined(separator: "\n")
+        } else if let firstLine = lines.first, firstLine.hasPrefix("Meeting Title:") {
+            meetingTitle = firstLine.replacingOccurrences(of: "Meeting Title:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let skipCount = (lines.count > 1 && lines[1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) ? 2 : 1
+            sanitizedContent = lines.dropFirst(skipCount).joined(separator: "\n")
+        }
+        
+        let displayDate = getFormattedDate(fromFilename: cleanName)
+        
+        let finalTitle = meetingTitle
+        let finalContent = sanitizedContent
+        let finalDate = displayDate
+        
+        Task {
+            let success = await NotionClient.uploadNote(title: finalTitle, markdown: finalContent, displayDate: finalDate)
+            await MainActor.run {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                if success {
+                    alert.messageText = "Notion Upload Successful"
+                    alert.informativeText = "Successfully uploaded '\(finalTitle)' to your Notion database."
+                    alert.alertStyle = .informational
+                } else {
+                    alert.messageText = "Notion Upload Failed"
+                    alert.informativeText = "An error occurred while uploading '\(finalTitle)' to Notion. Please check your network connection and configuration."
+                    alert.alertStyle = .warning
+                }
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
             }
         }
     }
@@ -1987,4 +2201,27 @@ struct NoteInfo: Codable {
     let previewFilename: String
     let attendees: String
     let organization: String
+}
+
+class EditableNSTextField: NSTextField {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown {
+            let commandPressed = event.modifierFlags.contains(.command)
+            if commandPressed {
+                switch event.charactersIgnoringModifiers {
+                case "x":
+                    if NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: self) { return true }
+                case "c":
+                    if NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: self) { return true }
+                case "v":
+                    if NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: self) { return true }
+                case "a":
+                    if NSApp.sendAction(#selector(NSResponder.selectAll(_:)), to: nil, from: self) { return true }
+                default:
+                    break
+                }
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
